@@ -5,7 +5,7 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{self, BufReader, BufWriter, ErrorKind};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 use std::string;
 
 use tempdir::TempDir;
@@ -320,16 +320,41 @@ impl Sandbox {
     }
 
     fn execute_command(&self, channel: Channel, mode: Mode, crate_type: CrateType, tests: bool, backtrace: bool, edition: Option<Edition>) -> Command {
-        let mut cmd = self.docker_command(Some(crate_type));
-        set_execution_environment(&mut cmd, None, crate_type, edition, backtrace);
+        let mut cmd = self.docker_exec_command(&channel);
+        cmd.arg("./to_temp_folder.sh");
+        let temp_folder = match cmd.output() {
+            Ok(output) => output,
+            Err(_) => panic!("Cannot prepare temp folder")
+        };
+        println!("{:?}", temp_folder);
+        let temp_folder = String::from_utf8(temp_folder.stdout).unwrap().replace("\r", "").replace("\n", "");
+        println!("{:?}", temp_folder);
+
+        let mut cmd = Command::new("docker");
+        cmd.arg("cp")
+            .arg(self.input_file.as_os_str().to_os_string())
+            .arg(format!("{}:{}/src/main.rs", channel.container_name(), temp_folder));
+        println!("{:?}", cmd);
+
+        if let Err(_) = cmd.status() {
+            panic!("Unable to copy source into container");
+        }
+
+        let mut cmd = Command::new("docker");
+
+        cmd.arg("exec");
+        cmd.arg("-t");
+        cmd.args(&["-w", temp_folder.as_str()]);
+        cmd.arg(channel.container_name());
+        //set_execution_environment(&mut cmd, None, crate_type, edition, backtrace);
 
         let execution_cmd = build_execution_command(None, channel, mode, crate_type, tests);
 
-        cmd.arg(&channel.container_name()).args(&execution_cmd);
+        cmd.args(&execution_cmd);
 
-        debug!("Execution command is {:?}", cmd);
+        println!("Execution command is {:?}", cmd);
 
-        cmd
+        Command::new("echo")
     }
 
     fn format_command(&self) -> Command {
@@ -389,6 +414,35 @@ impl Sandbox {
 
         cmd
     }
+
+    fn docker_exec_command(&self, channel: &Channel) -> Command {
+        let mut cmd = Command::new("docker");
+
+        cmd.arg("exec");
+        cmd.arg("-t");
+        cmd.arg(channel.container_name());
+
+        cmd
+    }
+
+}
+
+pub fn start_containers() -> Vec<Child> {
+    let mut containers = Vec::new();
+    for channel in [Channel::Stable, Channel::Beta, Channel::Nightly] {
+        let mut cmd = basic_secure_docker_command();
+
+        cmd.args(&["--name", channel.container_name()]);
+        cmd.arg(channel.container_name());
+        cmd.arg("echo");
+
+        match cmd.spawn() {
+            Ok(child) => containers.push(child),
+            Err(err) => panic!("Error starting container {}: {}", channel.container_name(), err)
+        }
+    }
+
+    containers
 }
 
 fn basic_secure_docker_command() -> Command {
@@ -418,7 +472,7 @@ fn build_execution_command(target: Option<CompileTarget>, channel: Channel, mode
     use self::CrateType::*;
     use self::Mode::*;
 
-    let mut cmd = vec!["cargo"];
+    let mut cmd = vec!["sh", "cargo.sh"];
 
     match (target, crate_type, tests) {
         (Some(Wasm), _, _) => cmd.push("wasm"),

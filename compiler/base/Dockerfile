@@ -41,6 +41,10 @@ RUN cd / && \
 WORKDIR /playground
 
 ADD Cargo.toml /playground/Cargo.toml
+ADD cargo.sh /playground/cargo.sh
+ADD to_temp_folder.sh /playground/to_temp_folder.sh
+RUN mkdir /tmp/snippets
+RUN chmod 111 /tmp/snippets
 RUN cargo fetch
 RUN cargo build
 RUN cargo build --release

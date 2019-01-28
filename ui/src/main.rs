@@ -80,6 +80,8 @@ fn main() {
     let logfile = env::var("PLAYGROUND_LOG_FILE").unwrap_or_else(|_| DEFAULT_LOG_FILE.to_string());
     let cors_enabled = env::var_os("PLAYGROUND_CORS_ENABLED").is_some();
 
+    sandbox::start_containers();
+
     let files = Staticfile::new(&root).expect("Unable to open root directory");
     let mut files = Chain::new(files);
     let one_day = Duration::new(ONE_DAY_IN_SECONDS, 0);
